@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Google Sans', Arial, sans-serif;
+      background: #f8f9fa;
+      padding: 24px;
+      color: #202124;
+    }
+
+    h3 {
+      font-size: 16px;
+      font-weight: 600;
+      color: #1E3A5F;
+      margin-bottom: 18px;
+    }
+
+    label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      color: #5f6368;
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    input[type="date"] {
+      width: 100%;
+      padding: 12px 14px;
+      font-size: 15px;
+      border: 2px solid #dadce0;
+      border-radius: 8px;
+      background: #fff;
+      color: #202124;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    input[type="date"]:focus {
+      border-color: #1E3A5F;
+    }
+
+    .hint {
+      font-size: 11px;
+      color: #9aa0a6;
+      margin-top: 6px;
+    }
+
+    .btn-row {
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+      margin-top: 24px;
+    }
+
+    button {
+      padding: 10px 22px;
+      font-size: 14px;
+      font-weight: 600;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 0.15s, opacity 0.15s;
+    }
+
+    .btn-cancel {
+      background: #e8eaed;
+      color: #5f6368;
+    }
+    .btn-cancel:hover { background: #dadce0; }
+
+    .btn-primary {
+      background: #1E3A5F;
+      color: #ffffff;
+    }
+    .btn-primary:hover { background: #2C5F8A; }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .spinner {
+      display: none;
+      font-size: 13px;
+      color: #9aa0a6;
+      margin-top: 12px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <h3>📅 Datum für neue Messung</h3>
+
+  <div>
+    <label for="dateInput">Messdatum</label>
+    <input type="date" id="dateInput">
+    <p class="hint">Standard: heute. Vergangenes Datum wählen um ältere Daten nachzutragen.</p>
+  </div>
+
+  <div class="btn-row">
+    <button class="btn-cancel" onclick="google.script.host.close()">Abbrechen</button>
+    <button class="btn-primary" id="submitBtn" onclick="submit()">7 Zeilen anlegen →</button>
+  </div>
+
+  <p class="spinner" id="spinner">⏳ Wird angelegt …</p>
+
+  <script>
+    // Pre-fill with today's date in YYYY-MM-DD
+    (function() {
+      const today = new Date();
+      const y = today.getFullYear();
+      const m = String(today.getMonth() + 1).padStart(2, '0');
+      const d = String(today.getDate()).padStart(2, '0');
+      document.getElementById('dateInput').value = `${y}-${m}-${d}`;
+    })();
+
+    function submit() {
+      const val = document.getElementById('dateInput').value;
+      if (!val) {
+        alert('Bitte ein Datum auswählen!');
+        return;
+      }
+
+      document.getElementById('submitBtn').disabled = true;
+      document.getElementById('spinner').style.display = 'block';
+
+      google.script.run
+        .withSuccessHandler(function() {
+          google.script.host.close();
+        })
+        .withFailureHandler(function(err) {
+          alert('Fehler: ' + err.message);
+          document.getElementById('submitBtn').disabled = false;
+          document.getElementById('spinner').style.display = 'none';
+        })
+        .startNewEntry(val);
+    }
+  </script>
+</body>
+</html>
