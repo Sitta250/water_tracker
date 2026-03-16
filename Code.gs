@@ -74,10 +74,10 @@ const SHEET = {
 };
 
 // Each parameter block in the ChartData sheet is this many columns wide:
-// [Date] + [7 normal] + [7 violation] + [LimitMin] + [LimitMax] = 17
-const BLOCK_COLS    = 17;
+// [Date] + [7 ponds] + [LimitMin] + [LimitMax] = 10
+const BLOCK_COLS    = 10;
 const BLOCK_SPACER  = 1;   // 1 blank column between blocks
-const MAX_DATA_ROWS = 1000; // max unique visit dates to support
+const MAX_DATA_ROWS = 300;  // max unique visit dates (~6 years of weekly visits)
 
 // ============================================================
 // MENU
@@ -325,9 +325,9 @@ function _blockStartCol(paramIndex) {
 }
 
 /**
- * Reads Messdaten, builds pivot tables (date × pond per parameter)
- * with violation split and limit columns, and writes them to
- * the ChartData sheet at fixed positions.
+ * Reads Messdaten, builds one pivot table per parameter:
+ *   [Date | Pond1..7 | LimitMin | LimitMax]
+ * and writes each block to the ChartData sheet.
  */
 function refreshChartData() {
   const ss             = SpreadsheetApp.getActiveSpreadsheet();
@@ -342,6 +342,8 @@ function refreshChartData() {
   const rows = allValues.slice(1)
     .filter(r => r[0] !== '' && r[1] !== '')
     .sort((a, b) => _toDate(a[0]) - _toDate(b[0]));
+
+  if (rows.length === 0) return;
 
   // Unique dates as "DD.MM.YYYY" strings (preserving sort order)
   const datesSeen = new Set();
@@ -358,63 +360,42 @@ function refreshChartData() {
     lookup[key] = r;
   });
 
+  // Clear entire chart data sheet first for a clean slate
+  chartDataSheet.clearContents();
+
   PARAMS.forEach((param, pIdx) => {
     const startCol = _blockStartCol(pIdx);
 
-    // Header row
-    const blockHeader = ['Datum'];
-    PONDS.forEach(p => blockHeader.push(p));               // normal series
-    PONDS.forEach(p => blockHeader.push(p + ' ⚠'));        // violation series
-    blockHeader.push('Grenzwert Min');
-    blockHeader.push('Grenzwert Max');
+    // Header: Datum | Pond1..7 | Min-Grenzwert | Max-Grenzwert
+    const blockHeader = ['Datum', ...PONDS, 'Min-Grenzwert', 'Max-Grenzwert'];
 
     // Data rows
     const dataRows = uniqueDates.map(dateStr => {
       const row = [dateStr];
-
-      // Normal values (null if this value is a violation)
       PONDS.forEach(pond => {
         const r = lookup[`${dateStr}|${pond}`];
         if (r && r[param.dataCol] !== '') {
           const v = parseFloat(r[param.dataCol]);
-          row.push(isNaN(v) ? null : (_isViolation(v, param) ? null : v));
+          row.push(isNaN(v) ? '' : v);
         } else {
-          row.push(null);
+          row.push('');
         }
       });
-
-      // Violation values (null if this value is within range)
-      PONDS.forEach(pond => {
-        const r = lookup[`${dateStr}|${pond}`];
-        if (r && r[param.dataCol] !== '') {
-          const v = parseFloat(r[param.dataCol]);
-          row.push(isNaN(v) ? null : (_isViolation(v, param) ? v : null));
-        } else {
-          row.push(null);
-        }
-      });
-
-      // Limit lines (constant for all dates)
-      row.push(param.limitMin !== null ? param.limitMin : null);
-      row.push(param.limitMax !== null ? param.limitMax : null);
-
+      // Constant limit lines (same value repeated for every date row)
+      row.push(param.limitMin !== null ? param.limitMin : '');
+      row.push(param.limitMax !== null ? param.limitMax : '');
       return row;
     });
 
-    // Clear old block, write new data
     const writeData = [blockHeader, ...dataRows];
-    const clearRows = Math.max(writeData.length + 5, 20);
-    chartDataSheet.getRange(1, startCol, clearRows, BLOCK_COLS).clear();
+    chartDataSheet.getRange(1, startCol, writeData.length, BLOCK_COLS)
+      .setValues(writeData);
 
-    if (writeData.length > 0) {
-      chartDataSheet.getRange(1, startCol, writeData.length, BLOCK_COLS)
-        .setValues(writeData);
-      // Style header
-      chartDataSheet.getRange(1, startCol, 1, BLOCK_COLS)
-        .setBackground('#2C5F8A')
-        .setFontColor('#FFFFFF')
-        .setFontWeight('bold');
-    }
+    // Style header row
+    chartDataSheet.getRange(1, startCol, 1, BLOCK_COLS)
+      .setBackground('#2C5F8A')
+      .setFontColor('#FFFFFF')
+      .setFontWeight('bold');
   });
 
   SpreadsheetApp.flush();
@@ -449,41 +430,30 @@ function _setupChartsRange(fromIdx, toIdx, clearFirst) {
   const PER_ROW      = 2;
   const ROW_HEIGHT   = 24;
   const COL_WIDTH    = 10;
-  const DATA_ROWS    = 300; // enough for ~300 visit dates (~6 years weekly)
-
   for (let pIdx = fromIdx; pIdx < toIdx; pIdx++) {
-    const param    = PARAMS[pIdx];
-    const startCol = _blockStartCol(pIdx);
-    const dataRange  = chartDataSheet.getRange(1, startCol, DATA_ROWS, BLOCK_COLS);
+    const param      = PARAMS[pIdx];
+    const startCol   = _blockStartCol(pIdx);
+    const dataRange  = chartDataSheet.getRange(1, startCol, MAX_DATA_ROWS + 1, BLOCK_COLS);
 
     // ── Series configuration ─────────────────────────────────
-    // Indices 0-6:   normal pond series      (coloured lines)
-    // Indices 7-13:  violation pond series   (red circle markers, no line)
-    // Index  14:     LimitMin line           (orange dashed)
-    // Index  15:     LimitMax line           (crimson dashed)
+    // Columns: [Date] [Pond0..6] [LimitMin] [LimitMax]
+    // Series indices (0-based, Date col is excluded by chart):
+    //   0-6  → pond lines   (coloured)
+    //   7    → Min limit    (orange dashed)
+    //   8    → Max limit    (red dashed)
     const series = {};
 
     PONDS.forEach((_, i) => {
       series[i] = {
-        color:          POND_COLORS[i],
-        lineWidth:      2,
-        pointSize:      4,
+        color:           POND_COLORS[i],
+        lineWidth:       2,
+        pointSize:       5,
         visibleInLegend: true
       };
     });
 
-    PONDS.forEach((_, i) => {
-      series[7 + i] = {
-        color:           '#FF0000',
-        lineWidth:       0,
-        pointSize:       10,
-        pointShape:      'circle',
-        visibleInLegend: false
-      };
-    });
-
-    // LimitMin series
-    series[14] = {
+    // LimitMin series (index 7)
+    series[7] = {
       color:           '#FF8C00',
       lineWidth:       2,
       pointSize:       0,
@@ -492,8 +462,8 @@ function _setupChartsRange(fromIdx, toIdx, clearFirst) {
       labelInLegend:   param.limitMin !== null ? `Min: ${param.limitMin}` : ''
     };
 
-    // LimitMax series
-    series[15] = {
+    // LimitMax series (index 8)
+    series[8] = {
       color:           '#CC0000',
       lineWidth:       2,
       pointSize:       0,
